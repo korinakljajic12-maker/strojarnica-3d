@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Strojarnica – 3D prikaz</title>
+<style>
+:root{--bg:#dfe7ee;--fg:#1d2630;--card:#ffffffe6;--bd:#b8c4d0;--ac:#1c6fb8;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#171d24;--fg:#e6ecf2;--card:#232c36e6;--bd:#3a4756;--ac:#5aaaf0}}
+:root[data-theme="dark"]{--bg:#171d24;--fg:#e6ecf2;--card:#232c36e6;--bd:#3a4756;--ac:#5aaaf0}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}
+#c{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block}
+.bar{position:fixed;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+button{background:var(--card);color:var(--fg);border:1px solid var(--bd);border-radius:10px;padding:8px 13px;font:inherit;cursor:pointer}
+button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+h1{position:fixed;top:calc(10px + env(safe-area-inset-top,0px));left:14px;margin:0;font-size:17px;font-weight:600}
+h1 small{display:block;font-weight:400;opacity:.7;font-size:12px}
+.hs{position:fixed;left:0;top:0;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:var(--ac);color:#fff;border:2px solid #fff;font-size:13px;font-weight:700;padding:0;display:flex;align-items:center;justify-content:center}
+#info{position:fixed;right:12px;top:calc(12px + env(safe-area-inset-top,0px));max-width:260px;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 14px;display:none}
+#info b{display:block;margin-bottom:2px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<h1>Strojarnica bazena<small>Povuci za rotaciju · zoom · klikni brojeve · „Presjek“ otkriva opremu</small></h1>
+<div id="info"><b id="it"></b><span id="ib"></span></div>
+<div class="bar">
+<button id="bLid">Otvori poklopac</button>
+<button id="bCut" class="on">Presjek</button>
+<button id="bIn">Pogled iznutra</button>
+<button id="bX">Prozirno</button>
+<button id="bRot">Auto-rotacija</button>
+<button id="bHs" class="on">Oznake</button>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const dark=matchMedia("(prefers-color-scheme:dark)").matches;
+const cv=document.getElementById("c");
+const R=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+R.setPixelRatio(Math.min(devicePixelRatio,2));R.shadowMap.enabled=true;
+const S=new THREE.Scene();S.background=new THREE.Color(dark?0x171d24:0xdfe7ee);
+const cam=new THREE.PerspectiveCamera(40,1,.1,100);
+S.add(new THREE.HemisphereLight(0xffffff,0x778899,.85));
+const dl=new THREE.DirectionalLight(0xffffff,.8);dl.position.set(3,6,5);dl.castShadow=true;
+dl.shadow.mapSize.set(1024,1024);Object.assign(dl.shadow.camera,{left:-3,right:3,top:3,bottom:-3});S.add(dl);
+const gr=new THREE.Mesh(new THREE.PlaneGeometry(30,30),new THREE.MeshStandardMaterial({color:dark?0x2a323b:0xaab4bd,roughness:1}));
+gr.rotation.x=-Math.PI/2;gr.receiveShadow=true;S.add(gr);
+
+function M(c,r=.6,x={}){return new THREE.MeshStandardMaterial(Object.assign({color:c,roughness:r},x))}
+const grey=M(0x9aa1ad),inner=M(0xb7a998),dgrey=M(0x3c4048,.5),pvc=M(0x4b5059,.5),blk=M(0x15171a,.4),
+ wood=M(0xb08a55,.9),lidM=M(0xa4abb6,.5),blue=M(0xa9cdea,.4),beige=M(0xc9bda6,.7),white=M(0xf0f2f4,.5),
+ tank=M(0x3b4551,.2,{metalness:.2}),glass=M(0x9ec4ff,.1,{transparent:true,opacity:.45}),
+ green=M(0x66c9a5,.2,{transparent:true,opacity:.6}),red=M(0xcc2a2a,.5);
+const G=new THREE.Group(),FG=new THREE.Group(),EQ=new THREE.Group();G.add(FG,EQ);S.add(G);G.position.y=-.12;
+function box(w,h,d,x,y,z,m,p=G){const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);o.position.set(x,y,z);o.castShadow=o.receiveShadow=true;p.add(o);return o}
+function cyl(r,h,x,y,z,m,ax="y",p=EQ,rt=r){const o=new THREE.Mesh(new THREE.CylinderGeometry(rt,r,h,24),m);o.position.set(x,y,z);
+ if(ax==="x")o.rotation.z=Math.PI/2;if(ax==="z")o.rotation.x=Math.PI/2;o.castShadow=true;p.add(o);return o}
+const V=(x,y,z)=>new THREE.Vector3(x,y,z);
+function seg(a,b,r=.03,m=pvc){a=V(...a);b=V(...b);const d=b.clone().sub(a),o=new THREE.Mesh(new THREE.CylinderGeometry(r,r,d.length(),16),m);
+ o.position.copy(a).add(b).multiplyScalar(.5);o.quaternion.setFromUnitVectors(V(0,1,0),d.normalize());o.castShadow=true;EQ.add(o);
+ [a,b].forEach(p=>{const s=new THREE.Mesh(new THREE.SphereGeometry(r*1.05,12,8),m);s.position.copy(p);EQ.add(s)})}
+function valve(x,y,z,ax="x"){cyl(.045,.1,x,y,z,pvc,ax);box(.1,.02,.035,x,y+.07,z,blue,EQ)}
+
+const B=.12,H=1.5,C=1.5,Y0=.17;
+
+// stijenke (šuplje)
+box(C,.05,C,0,B+.025,0,inner);
+box(.05,H,C,-.725,B+H/2,0,grey);box(.05,H,C,.725,B+H/2,0,grey);box(1.4,H,.05,0,B+H/2,-.725,grey);
+box(1.4,H,.05,0,B+H/2,.725,grey,FG);
+// krov s otvorom
+const rt=B+H-.025;box(C,.05,.25,0,rt,.625,grey);box(C,.05,.25,0,rt,-.625,grey);box(.25,.05,1,.625,rt,0,grey);box(.25,.05,1,-.625,rt,0,grey);
+// rebra
+[-.6,-.3,0,.3,.6].forEach(t=>{
+ box(.22,H,.14,t,B+H/2,C/2+.05,grey,FG);box(.22,H,.14,t,B+H/2,-C/2-.05,grey);
+ box(.14,H,.22,C/2+.05,B+H/2,t,grey);box(.14,H,.22,-C/2-.05,B+H/2,t,grey)});
+[.35,.8,1.25].forEach(y=>box(.14,.2,.03,0,B+y,C/2+.125,dgrey,FG));
+// grlo
+const nt=B+H+.25,gm=[grey];
+[[1.05,.04,0,.5],[1.05,.04,0,-.5]].forEach(a=>box(a[0],.25,a[1],0,B+H+.125,a[3],grey));
+box(.04,.25,1.05,.5,B+H+.125,0,grey);box(.04,.25,1.05,-.5,B+H+.125,0,grey);
+// ušice
+[-1,1].forEach(sx=>[-1,1].forEach(sz=>{box(.2,.2,.08,sx*.6,B+H+.02,sz*.85,grey,sz>0?FG:G);
+ const t=new THREE.Mesh(new THREE.TorusGeometry(.07,.035,8,16),grey);t.position.set(sx*.6,B+H+.1,sz*.85);(sz>0?FG:G).add(t)}));
+// poklopac
+function lt(){const c=document.createElement("canvas");c.width=c.height=512;const x=c.getContext("2d");
+ x.fillStyle="#a4abb6";x.fillRect(0,0,512,512);x.strokeStyle="#8a919c";x.lineWidth=3;
+ for(let i=0;i<=16;i++){x.beginPath();x.moveTo(i*32,0);x.lineTo(i*32,512);x.stroke();x.beginPath();x.moveTo(0,i*32);x.lineTo(512,i*32);x.stroke()}
+ x.fillStyle="#b6bcc6";x.fillRect(110,200,300,110);x.strokeRect(110,200,300,110);
+ x.fillStyle="#6c737e";x.font="bold 40px sans-serif";x.textAlign="center";x.fillText("AQUA CHEM",260,268);return new THREE.CanvasTexture(c)}
+const lp=new THREE.Group();lp.position.set(0,nt+.025,-.5);G.add(lp);
+const lid=new THREE.Mesh(new THREE.BoxGeometry(1.04,.05,1.04),[lidM,lidM,new THREE.MeshStandardMaterial({map:lt(),roughness:.5}),lidM,lidM,lidM]);
+lid.position.z=.5;lid.castShadow=true;lp.add(lid);
+// vanjski priključci (kroz stijenku)
+function stub(ax,s,y,b){const o=cyl(.055,.18,0,B+y,0,blk,ax==="x"?"x":"z",s>0&&ax==="z"?FG:G);const off=C/2+.11;
+ if(ax==="x")o.position.set(s*off,B+y,b);else o.position.set(b,B+y,s*off)}
+[.3,.7,1.1].forEach(y=>stub("x",1,y,.45));[.3,.7].forEach(y=>stub("x",1,y,-.15));
+stub("x",-1,.35,-.4);stub("z",1,.3,-.7);stub("z",1,.3,.75);
+
+// ===== OPREMA =====
+// pješčani filter
+cyl(.26,.08,-.4,Y0+.04,.15,blk);
+const sp=new THREE.Mesh(new THREE.SphereGeometry(.31,32,20),tank);sp.scale.y=.95;sp.position.set(-.4,Y0+.4,.15);sp.castShadow=true;EQ.add(sp);
+cyl(.19,.07,-.4,Y0+.75,.15,blk);cyl(.09,.08,-.4,Y0+.82,.15,glass);cyl(.04,.02,-.37,Y0+.88,.15,white);
+cyl(.04,.12,-.04,Y0+.3,.15,blk,"x");cyl(.04,.12,-.04,Y0+.15,.15,blk,"x");
+box(.2,.14,.3,-.6,Y0+.55,.05,beige,EQ);   // višeputni ventil
+box(.16,.04,.2,-.6,Y0+.64,.05,blk,EQ);
+// pumpa
+box(.5,.02,.34,.15,Y0+.01,.2,beige,EQ);
+box(.26,.2,.2,.03,Y0+.13,.2,blk,EQ);box(.3,.24,.22,.27,Y0+.13,.2,dgrey,EQ);cyl(.08,.1,.29,Y0+.3,.2,glass);
+// elektroliza – ćelija
+box(.38,.09,.09,-.35,.85,-.52,glass,EQ);cyl(.04,.05,-.55,.85,-.52,pvc,"x");cyl(.04,.05,-.15,.85,-.52,pvc,"x");
+// cijevi
+seg([-.7,1.0,-.58],[.35,1.0,-.58]);seg([.35,1.0,-.58],[.35,1.0,.45]);
+seg([-.55,1.0,-.58],[-.55,.85,-.52]);seg([-.15,.85,-.52],[-.15,1.0,-.58]);
+seg([-.04,Y0+.3,.15],[.35,Y0+.3,.2]);seg([.27,Y0+.36,.2],[.27,.95,.2]);seg([.27,.95,.2],[.35,.95,.2]);
+[[.42,.45],[.82,.45],[1.22,.45],[.42,-.15],[.82,-.15]].forEach(([y,z])=>{seg([.72,y,z],[.35,y,z],.03);valve(.55,y,z)});
+seg([.35,.42,.45],[.35,1.22,.45]);seg([.35,.42,-.15],[.35,.82,-.15]);seg([.35,.82,-.15],[.35,.82,.45]);
+// električna ploča na stražnjoj stijeni
+box(.28,.38,.1,-.45,1.22,-.66,blk,EQ);box(.18,.12,.01,-.45,1.28,-.605,M(0x5c7a85,.3),EQ);
+box(.5,.32,.1,.02,1.22,-.66,white,EQ);box(.46,.26,.02,.02,1.22,-.6,green,EQ);
+box(.15,.2,.1,.4,1.22,-.66,blk,EQ);box(.08,.08,.06,.4,1.06,-.67,white,EQ);
+box(1.38,.06,.05,0,.98,-.7,beige,EQ);      // kabelski kanal
+// kanisteri
+box(.22,.3,.18,.45,Y0+.15,-.5,white,EQ);cyl(.03,.04,.45,Y0+.32,-.5,red);
+box(.2,.26,.16,.2,Y0+.13,-.55,white,EQ);
+
+// --- detalji ---
+for(let i=-1;i<=1;i++)for(let j=-1;j<=1;j++)box(.38,.012,.38,i*.43,Y0+.006,j*.43,M(0x9d9183),EQ);
+[[.42,.45],[.82,.45],[1.22,.45],[.42,-.15],[.82,-.15]].forEach(([y,z])=>{cyl(.065,.05,.745,y,z,blk,'x');cyl(.05,.05,.4,y,z,pvc,'x')});
+[-.3,.1].forEach(x=>cyl(.042,.06,x,1.0,-.58,dgrey,'x'));
+[-.15,.2].forEach(x=>{const c=new THREE.Mesh(new THREE.TorusGeometry(.036,.008,6,14),beige);c.position.set(x,1.0,-.58);c.rotation.y=Math.PI/2;EQ.add(c)});
+for(let k=0;k<12;k++){const a=k/12*Math.PI*2;cyl(.012,.02,-.4+.17*Math.cos(a),Y0+.79,.15+.17*Math.sin(a),blk)}
+cyl(.012,.03,-.32,Y0+.9,.15,M(0xe6d84a));
+for(let k=0;k<12;k++)box(.026,.055,.012,-.18+k*.03,1.24,-.585,k===7?blk:white,EQ);
+box(.4,.03,.012,.02,1.16,-.585,white,EQ);
+seg([.02,1.06,-.66],[.02,.98,-.69],.006,blk);seg([.3,.98,-.69],[.3,Y0+.2,-.6],.006,blk);seg([.3,Y0+.2,-.6],[.2,Y0+.2,.1],.006,blk);
+box(.04,.5,.04,.66,1.25,-.69,beige,EQ);
+[.55,1.0].forEach(y=>box(.09,.13,.22,-.655,y,.52,white,EQ));
+[-.66,.66].forEach(x=>box(.07,1.3,.03,x,.85,-.695,M(0xa89a86),EQ));
+// ===== OZNAKE =====
+const HS=[
+ {n:1,p:[0,nt+.1,0],t:"Poklopac",b:"Kvadratni poklopac s protukliznom rešetkom i oznakom Aqua Chem, šarke straga.",o:1},
+ {n:2,p:[.6,B+H+.12,.85],t:"Ušice za dizanje",b:"Četiri ušice za dizalicu pri transportu i spuštanju u iskop.",o:1},
+ {n:3,p:[-.4,Y0+.95,.15],t:"Pješčani filter",b:"Posuda od polimera s manometrom, prozirnim poklopcem i višeputnim ventilom na boku."},
+ {n:4,p:[.27,Y0+.42,.2],t:"Pumpa",b:"Cirkulacijska pumpa s prozirnim predfilterom, na PE podlozi."},
+ {n:5,p:[-.35,.95,-.52],t:"Ćelija elektrolize soli",b:"Prozirna ćelija za slanu elektrolizu; upravljačka jedinica je iznad na zidu."},
+ {n:6,p:[.02,1.42,-.6],t:"Razvodni ormar",b:"Ormar oznake +RO.SM s osiguračima, uz transformator i razdjelnu kutiju. Kabeli idu perforiranim kanalom."},
+ {n:7,p:[.55,.9,.45],t:"Ventili i prolazi",b:"Kuglasti ventili s plavim ručicama na PVC cijevima; crni prolazi kroz stijenku vode van prema bazenu."},
+ {n:8,p:[.45,Y0+.4,-.5],t:"Kanisteri",b:"Bijeli kanisteri za kemiju uz stražnju stijenku."}
+];
+const info=document.getElementById("info"),it=document.getElementById("it"),ib=document.getElementById("ib");
+HS.forEach(h=>{const e=document.createElement("button");e.className="hs";e.textContent=h.n;
+ e.onclick=ev=>{ev.stopPropagation();it.textContent=h.t;ib.textContent=h.b;info.style.display="block"};
+ document.body.appendChild(e);h.e=e;h.v=new THREE.Vector3(...h.p)});
+info.onclick=()=>info.style.display="none";
+
+// kamera
+let goal=null,th=.5,ph=1.05,rad=5.2,tgt=new THREE.Vector3(0,.9,0),auto=false,showHs=true,lidOpen=false,lidA=0,cut=true,xray=false;
+const ptr=new Map();let pd=0;
+cv.addEventListener("pointerdown",e=>{cv.setPointerCapture(e.pointerId);ptr.set(e.pointerId,e)});
+cv.addEventListener("pointermove",e=>{const o=ptr.get(e.pointerId);if(!o)return;
+ if(ptr.size===1){goal=null;th-=(e.clientX-o.clientX)*.007;ph=Math.min(1.55,Math.max(.1,ph-(e.clientY-o.clientY)*.007))}
+ ptr.set(e.pointerId,e);
+ if(ptr.size===2){const [a,b]=[...ptr.values()],d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);if(pd)rad=Math.min(12,Math.max(1.8,rad*pd/d));pd=d}});
+const up=e=>{ptr.delete(e.pointerId);pd=0};cv.addEventListener("pointerup",up);cv.addEventListener("pointercancel",up);
+cv.addEventListener("wheel",e=>{e.preventDefault();rad=Math.min(12,Math.max(1.8,rad*(1+e.deltaY*.001)))},{passive:false});
+
+function apply(){FG.visible=!cut;[grey,lidM,inner].forEach(m=>{m.transparent=xray;m.opacity=xray?.18:1;m.depthWrite=!xray;m.needsUpdate=true})}
+function tog(id,f){const b=document.getElementById(id);b.onclick=()=>{b.classList.toggle("on");f(b.classList.contains("on"));apply()}}
+tog("bLid",v=>{lidOpen=v;document.getElementById("bLid").textContent=v?"Zatvori poklopac":"Otvori poklopac"});
+tog("bCut",v=>cut=v);tog("bX",v=>xray=v);tog("bRot",v=>auto=v);
+document.getElementById("bHs").onclick=function(){this.classList.toggle("on");showHs=this.classList.contains("on");if(!showHs)info.style.display="none"};
+cut=true;FG.visible=false;
+const bIn=document.getElementById("bIn");bIn.onclick=()=>{const on=bIn.classList.toggle("on");if(on){cut=true;document.getElementById("bCut").classList.add("on");goal={th:.15,ph:.95,rad:2.4,t:V(0,.75,0)}}else goal={th:.5,ph:1.05,rad:5.2,t:V(0,.9,0)};apply()};
+document.getElementById("bCut").classList.add("on");
+function resize(){R.setSize(innerWidth,innerHeight,false);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();if(innerWidth<600)rad=Math.max(rad,7)}
+addEventListener("resize",resize);resize();
+const tmp=new THREE.Vector3();
+(function loop(){requestAnimationFrame(loop);
+ if(auto&&!ptr.size)th+=.004;
+ if(goal){th+=(goal.th-th)*.07;ph+=(goal.ph-ph)*.07;rad+=(goal.rad-rad)*.07;tgt.lerp(goal.t,.07)}lidA+=((lidOpen?1.9:0)-lidA)*.1;lp.rotation.x=-lidA;
+ cam.position.set(tgt.x+rad*Math.sin(ph)*Math.sin(th),tgt.y+rad*Math.cos(ph),tgt.z+rad*Math.sin(ph)*Math.cos(th));
+ cam.lookAt(tgt);R.render(S,cam);
+ HS.forEach(h=>{tmp.copy(h.v).add(G.position).project(cam);const ok=showHs&&tmp.z<1&&(h.o||cut||xray);h.e.style.display=ok?"flex":"none";
+  h.e.style.left=((tmp.x+1)/2*innerWidth)+"px";h.e.style.top=((1-tmp.y)/2*innerHeight)+"px"})})();
+</script>
+</body>
+</html>
